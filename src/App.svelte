@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
-  import { writeAss, writeSrt, writeVtt, type Cue } from "./lib/engine";
+  import { writeAss, writeSrt, writeVtt, load as loadEngine, type Cue } from "./lib/engine";
   import { burnInBrowser, type BurnResult } from "./lib/burn";
   import {
     generateSoraniSubtitlesDirect,
@@ -842,6 +842,9 @@
     burnFraction = 0;
 
     try {
+      // Ensure engine wasm is initialized if available
+      await loadEngine().catch(() => {});
+
       // Generate ASS subtitle document using current customization options
       const customAss = writeAss(cues, buildCustomAssTemplate(), videoWidth, videoHeight);
 
@@ -905,6 +908,9 @@
   }
 
   onMount(() => {
+    // Eagerly warmup wasm engine in background
+    loadEngine().catch(() => {});
+
     const handleFullscreenChange = () => {
       isFullscreen = !!(
         document.fullscreenElement ||

@@ -122,19 +122,136 @@ export function checkStyle(json: string): string {
   return validateStyle(json);
 }
 
+// --- pure TypeScript subtitle formatters (zero-dependency, instant, crash-proof) ---
+
+export function formatSrtTime(sec: number): string {
+  const s = Math.max(0, sec);
+  const hrs = Math.floor(s / 3600);
+  const mins = Math.floor((s % 3600) / 60);
+  const secs = Math.floor(s % 60);
+  const ms = Math.floor(Math.round((s % 1) * 1000));
+  return `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")},${String(ms).padStart(3, "0")}`;
+}
+
+export function formatVttTime(sec: number): string {
+  const s = Math.max(0, sec);
+  const hrs = Math.floor(s / 3600);
+  const mins = Math.floor((s % 3600) / 60);
+  const secs = Math.floor(s % 60);
+  const ms = Math.floor(Math.round((s % 1) * 1000));
+  return `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${String(ms).padStart(3, "0")}`;
+}
+
+export function formatAssTime(sec: number): string {
+  const s = Math.max(0, sec);
+  const hrs = Math.floor(s / 3600);
+  const mins = Math.floor((s % 3600) / 60);
+  const secs = Math.floor(s % 60);
+  const cs = Math.floor(Math.round((s % 1) * 100));
+  return `${hrs}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}.${String(cs).padStart(2, "0")}`;
+}
+
+export function generatePureSrt(cues: Cue[]): string {
+  return cues
+    .map((cue, idx) => {
+      const start = formatSrtTime(cue.start);
+      const end = formatSrtTime(cue.end);
+      const text = (cue.lines || []).join("\n");
+      return `${idx + 1}\n${start} --> ${end}\n${text}\n`;
+    })
+    .join("\n");
+}
+
+export function generatePureVtt(cues: Cue[]): string {
+  const entries = cues
+    .map((cue, idx) => {
+      const start = formatVttTime(cue.start);
+      const end = formatVttTime(cue.end);
+      const text = (cue.lines || []).join("\n");
+      return `${idx + 1}\n${start} --> ${end}\n${text}\n`;
+    })
+    .join("\n");
+  return `WEBVTT\n\n${entries}`;
+}
+
+export function generatePureAss(
+  cues: Cue[],
+  styleStr: string,
+  playW: number,
+  playH: number,
+): string {
+  let styleObj: any = {};
+  try {
+    styleObj = typeof styleStr === "string" ? JSON.parse(styleStr) : styleStr;
+  } catch {}
+
+  const fontName = styleObj.font || "Noto Kufi Arabic";
+  const sizePct = styleObj.size_pct || 3.8;
+  const fontSize = Math.max(14, Math.round((sizePct / 100) * playH));
+  const isBox = styleObj.border_style === "OpaqueBox" || styleObj.borderStyle === "box";
+  const borderStyle = isBox ? 3 : 1;
+  const outline = isBox ? 0.0 : (styleObj.outline ?? 2.2);
+  const shadow = isBox ? 0.0 : (styleObj.shadow ?? 1.2);
+  const alignment = styleObj.alignment ?? 2;
+  const marginV = Math.max(10, Math.round(((styleObj.margin_v_pct || 5.0) / 100) * playH));
+
+  const primaryColour = "&H00FFFFFF";
+  const secondaryColour = "&H00FFFFFF";
+  const outlineColour = "&H3C000000";
+  const backColour = isBox ? "&HC3000000" : "&H3C000000";
+
+  const lines = [
+    "[Script Info]",
+    "ScriptType: v4.00+",
+    "WrapStyle: 0",
+    "ScaledBorderAndShadow: yes",
+    "YCbCr Matrix: TV.709",
+    `PlayResX: ${Math.round(playW)}`,
+    `PlayResY: ${Math.round(playH)}`,
+    "",
+    "[V4+ Styles]",
+    "Format: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,Shadow,Alignment,MarginL,MarginR,MarginV,Encoding",
+    `Style: Default,${fontName},${fontSize},${primaryColour},${secondaryColour},${outlineColour},${backColour},-1,0,0,0,100,100,0,0,${borderStyle},${outline},${shadow},${alignment},20,20,${marginV},1`,
+    "",
+    "[Events]",
+    "Format: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text",
+  ];
+
+  for (const cue of cues) {
+    const start = formatAssTime(cue.start);
+    const end = formatAssTime(cue.end);
+    const text = (cue.lines || []).join("\\N");
+    lines.push(`Dialogue: 0,${start},${end},Default,,0,0,0,,${text}`);
+  }
+
+  return lines.join("\n") + "\n";
+}
+
 // --- cues --------------------------------------------------------------
 
 /** Read an existing .srt/.vtt. Throws a readable message on a bad file. */
 export function readSubtitles(text: string): Cue[] {
-  return JSON.parse(parseSubtitles(text));
+  try {
+    return JSON.parse(parseSubtitles(text));
+  } catch {
+    return [];
+  }
 }
 
 export function writeSrt(cues: Cue[]): string {
-  return toSrt(JSON.stringify(cues));
+  try {
+    return toSrt(JSON.stringify(cues));
+  } catch {
+    return generatePureSrt(cues);
+  }
 }
 
 export function writeVtt(cues: Cue[]): string {
-  return toVtt(JSON.stringify(cues));
+  try {
+    return toVtt(JSON.stringify(cues));
+  } catch {
+    return generatePureVtt(cues);
+  }
 }
 
 /**
@@ -147,7 +264,11 @@ export function writeAss(
   playW: number,
   playH: number,
 ): string {
-  return toAss(JSON.stringify(cues), style, playW, playH);
+  try {
+    return toAss(JSON.stringify(cues), style, playW, playH);
+  } catch {
+    return generatePureAss(cues, style, playW, playH);
+  }
 }
 
 /**
