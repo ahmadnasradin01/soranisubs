@@ -50,11 +50,17 @@ import {
 } from "mediabunny";
 
 import { SubtitleRaster } from "./raster";
+import {
+  createSubtitleCanvasRenderer,
+  type SubtitleBurnConfig,
+  type SubtitleCanvasRenderer,
+} from "./canvasSubtitleRenderer";
 
 export interface BurnOptions {
   file: File;
-  /** The ASS document, generated at `width`x`height`, on the source timeline. */
-  ass: string;
+  /** Legacy ASS document if subtitleConfig not provided */
+  ass?: string;
+  subtitleConfig?: SubtitleBurnConfig;
   width: number;
   height: number;
   /** Clip start on the source timeline. */
@@ -202,7 +208,14 @@ export async function burnInBrowser(options: BurnOptions): Promise<BurnResult> {
     }
   }
 
-  const raster = await SubtitleRaster.create(ass, width, height, customFont);
+  let subtitleRenderer: SubtitleCanvasRenderer | null = null;
+  let raster: SubtitleRaster | null = null;
+
+  if (options.subtitleConfig) {
+    subtitleRenderer = createSubtitleCanvasRenderer(options.subtitleConfig, width, height);
+  } else if (ass) {
+    raster = await SubtitleRaster.create(ass, width, height, customFont);
+  }
 
   try {
     await output.start();
@@ -235,22 +248,16 @@ export async function burnInBrowser(options: BurnOptions): Promise<BurnResult> {
     for await (const sample of sampleSink.samples(clipStart, clipEnd)) {
       assertNotAborted(signal);
 
-      // libass is asked for the *source* time, because that is the
-      // timeline the ASS document was written on -- exactly the rule the
-      // desktop follows when it burns a trimmed clip.
-      await raster.render(sample.timestamp);
-
-      // Picture first, subtitles over it -- the obvious order, and the only
-      // one that works. Drawing the subtitles first and slipping the frame
-      // underneath with `destination-over` composites onto nothing: the
-      // context is `alpha: false`, so the canvas is already opaque and
-      // there is no transparency for the picture to land in. That produced
-      // a perfectly subtitled black video.
-      //
-      // `draw` applies the source's rotation and pixel aspect ratio, and
-      // scales to the output size in one step.
+      // 1. Draw underlying video frame at full target resolution
       sample.draw(ctx, 0, 0, width, height);
-      ctx.drawImage(raster.canvas, 0, 0, width, height);
+
+      // 2. Composite subtitle overlay with 100% preview fidelity
+      if (subtitleRenderer) {
+        subtitleRenderer.drawAt(ctx, sample.timestamp);
+      } else if (raster) {
+        await raster.render(sample.timestamp);
+        ctx.drawImage(raster.canvas, 0, 0, width, height);
+      }
 
       const timestamp = Math.max(0, sample.timestamp - clipStart);
       await videoSource.add(timestamp, sample.duration);
@@ -282,7 +289,7 @@ export async function burnInBrowser(options: BurnOptions): Promise<BurnResult> {
     await output.cancel().catch(() => {});
     throw error;
   } finally {
-    raster.destroy();
+    if (raster) raster.destroy();
     input.dispose();
   }
 }

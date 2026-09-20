@@ -842,35 +842,34 @@
     burnFraction = 0;
 
     try {
-      // Ensure engine wasm is initialized if available
-      await loadEngine().catch(() => {});
+      // Ensure fonts are ready and loaded in document.fonts before drawing
+      await document.fonts.ready;
 
-      // Generate ASS subtitle document using current customization options
-      const customAss = writeAss(cues, buildCustomAssTemplate(), videoWidth, videoHeight);
-
-      let fontBytes: Uint8Array | null = null;
-      let fontNameForAss = selectedFontId;
-
-      const activeCustom = uploadedFonts.find((f) => f.id === selectedFontId);
-      if (activeCustom) {
-        fontBytes = activeCustom.bytes;
-        fontNameForAss = activeCustom.name;
-      } else {
-        const kf = TOP_50_KURDISH_FONTS.find((f) => f.name === selectedFontId);
-        if (kf) {
-          fontNameForAss = kf.name;
-          fontBytes = await loadWebFont(kf.name, kf.fontUrl);
-        }
+      const kf = TOP_50_KURDISH_FONTS.find((f) => f.name === selectedFontId);
+      if (kf) {
+        await loadWebFont(kf.name, kf.fontUrl);
       }
 
+      try {
+        await document.fonts.load(`600 16px ${selectedFontFamily}`);
+      } catch {}
+
+      // Direct high-fidelity video burning with 1:1 preview visual parity
       const result: BurnResult = await burnInBrowser({
         file: videoFile,
-        ass: customAss,
+        subtitleConfig: {
+          cues,
+          fontFamily: selectedFontFamily,
+          fontSize: subtitleFontSize,
+          bg: subtitleBg,
+          align: subtitleAlign,
+          playerWidth,
+          playerHeight,
+        },
         width: videoWidth,
         height: videoHeight,
         start: 0,
         end: null,
-        customFont: fontBytes ? { name: fontNameForAss, bytes: fontBytes } : null,
         onProgress: (frac, note) => {
           burnFraction = frac;
           burnProgressText = `${Math.round(frac * 100)}% - ${note}`;
