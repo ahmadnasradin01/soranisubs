@@ -58,7 +58,7 @@
   // --- Subtitle Customization State ---
   let uploadedFonts: CustomFontRecord[] = $state([]);
   let selectedFontId = $state("Noto Kufi Arabic");
-  let subtitleFontSize = $state(15); // px (crisp, modern caption default)
+  let subtitleFontSize = $state(16); // px (crisp medium caption default)
   let subtitleAlign: "center" | "left" | "right" = $state("center");
   let subtitleBg: "box" | "shadow" = $state("box");
 
@@ -133,14 +133,14 @@
   // --- Subtitle Editing & Selection State ---
   let selectedCueIndex: number | null = $state(null);
 
-  // Current active cue derived from currentTime with frame-accurate tolerance
+  // Current active cue derived from currentTime with exact acoustic start & end
   let activeCue = $derived.by(() => {
     if (cues.length === 0) return null;
     const t = currentTime;
     for (let i = 0; i < cues.length; i++) {
       const c = cues[i];
-      // 50ms lead-in tolerance ensures subtitle displays as vocal attack begins
-      if (t >= c.start - 0.05 && t <= c.end) {
+      // Exact millisecond timing ensures subtitle appears precisely with vocals
+      if (t >= c.start && t <= c.end) {
         return c;
       }
     }
@@ -166,7 +166,7 @@
     const t = currentTime;
     for (let i = 0; i < cues.length; i++) {
       const c = cues[i];
-      if (t >= c.start - 0.05 && t <= c.end) {
+      if (t >= c.start && t <= c.end) {
         return i;
       }
     }
@@ -781,8 +781,8 @@
   // Build ASS template matching the user's custom font, size, align, and bg
   function buildCustomAssTemplate(): string {
     const alignmentNum = subtitleAlign === "left" ? 1 : subtitleAlign === "right" ? 3 : 2;
-    // Standard subtitle size relative to video height (clean ~3.5% screen height)
-    const sizePct = Math.max(2.4, Math.min(5.2, (subtitleFontSize / 15) * 3.5));
+    // Standard subtitle size relative to video height (clean ~3.8% screen height)
+    const sizePct = Math.max(2.5, Math.min(5.5, (subtitleFontSize / 16) * 3.8));
     const isBox = subtitleBg === "box";
 
     const activeCustom = uploadedFonts.find((f) => f.id === selectedFontId);
@@ -1341,14 +1341,14 @@
                 type="button"
                 class="size-nudge-btn"
                 title="Decrease font size"
-                onclick={() => subtitleFontSize = Math.max(11, subtitleFontSize - 1)}
+                onclick={() => subtitleFontSize = Math.max(12, subtitleFontSize - 1)}
               >&minus;</button>
               <input
                 id="font-size-slider"
                 type="range"
                 class="customizer-range"
-                min="11"
-                max="32"
+                min="12"
+                max="34"
                 step="1"
                 bind:value={subtitleFontSize}
                 oninput={(e) => subtitleFontSize = Number((e.target as HTMLInputElement).value)}
@@ -1357,7 +1357,7 @@
                 type="button"
                 class="size-nudge-btn"
                 title="Increase font size"
-                onclick={() => subtitleFontSize = Math.min(32, subtitleFontSize + 1)}
+                onclick={() => subtitleFontSize = Math.min(34, subtitleFontSize + 1)}
               >+</button>
             </div>
           </div>

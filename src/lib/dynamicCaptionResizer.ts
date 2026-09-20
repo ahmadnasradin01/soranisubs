@@ -6,7 +6,7 @@
  * 1. Screen / Player container dimensions (width & height in px)
  * 2. Video aspect ratio (landscape 16:9, vertical 9:16, ultra-wide 21:9, square 1:1)
  * 3. Caption wording: character length, word count, longest word length
- * 4. User's base font size preference
+ * 4. User's base font size preference (default: 16px Medium)
  * 5. Controls visibility & measured controls bar height
  * 6. Fullscreen & safe area metrics
  */
@@ -116,6 +116,8 @@ export function wrapDynamicSoraniLines(text: string, maxCharsPerLine: number): s
 
 /**
  * Calculates responsive, dynamic caption layout metrics.
+ * Ensures a clear, legible Medium font size on mobile (14.0px - 15.5px)
+ * while dynamically adapting to wording length, container size, and aspect ratios.
  */
 export function calculateDynamicCaptionLayout(options: DynamicCaptionOptions): DynamicCaptionLayout {
   const {
@@ -123,7 +125,7 @@ export function calculateDynamicCaptionLayout(options: DynamicCaptionOptions): D
     containerHeight = 360,
     videoAspectRatio = 16 / 9,
     captionText = "",
-    baseFontSize = 15,
+    baseFontSize = 16,
     controlsVisible = true,
     controlsBarHeight = 60,
     isFullscreen = false,
@@ -141,59 +143,42 @@ export function calculateDynamicCaptionLayout(options: DynamicCaptionOptions): D
   }
 
   const isVertical = videoAspectRatio < 0.95;
-  const isUltraWide = videoAspectRatio > 2.05;
-  const isSmallScreen = containerWidth < 460 || containerHeight < 260;
-  const isTinyScreen = containerWidth < 360 || containerHeight < 210;
+  const isSmallScreen = containerWidth < 480 || containerHeight < 270;
+  const isTinyScreen = containerWidth < 350 || containerHeight < 200;
 
-  // 1. Container Width Scaling Factor
-  // Reference standard desktop player width: 640px
-  const widthRatio = Math.max(0.4, Math.min(1.6, containerWidth / 640));
-  // Smooth sub-linear scaling curve: y = x^0.42
-  const widthScale = Math.pow(widthRatio, 0.42);
+  // 1. Gentle responsive container scaling:
+  // Desktop (640px): 1.0 -> 16px
+  // Mobile (360px): widthRatio = 0.5625 -> containerScale = 0.922 -> ~14.8px (True Medium!)
+  const widthRatio = Math.max(0.5, Math.min(1.8, containerWidth / 640));
+  const containerScale = Math.pow(widthRatio, 0.14);
 
-  // 2. Container Height & Aspect Ratio Constraint
-  // When height is cramped (e.g. 16:9 on mobile where height is ~190-210px), scale down
+  // 2. Container Height Constraint (only kicks in for extremely shallow letterboxed players)
   let heightScale = 1.0;
-  if (containerHeight < 280) {
-    const hRatio = Math.max(0.65, containerHeight / 280);
-    heightScale = 0.78 + (hRatio - 0.65) * 0.62;
+  if (containerHeight < 190) {
+    heightScale = Math.max(0.92, containerHeight / 190);
   } else if (isVertical) {
-    // In vertical video, height is abundant, text wraps faster
     heightScale = 1.02;
   }
 
-  // 3. Caption Length & Word Count Scaling Factor
+  // 3. Caption Length Scaling:
+  // Short/medium text stays prominent; long multi-clause text tightens slightly
   let lengthScale = 1.0;
-  if (charCount <= 22) {
-    // Short, punchy single-line caption (e.g. "سڵاو هاوڕێیان")
-    lengthScale = 1.06;
-  } else if (charCount <= 45) {
-    // Normal medium caption
+  if (charCount <= 35) {
     lengthScale = 1.0;
-  } else if (charCount <= 75) {
-    // Longer sentence: scale down slightly to fit 2 lines cleanly
-    lengthScale = 0.92;
-  } else if (charCount <= 110) {
-    // Long multi-clause sentence: scale down so it doesn't crowd screen
-    lengthScale = 0.83;
+  } else if (charCount <= 65) {
+    lengthScale = 0.96;
+  } else if (charCount <= 95) {
+    lengthScale = 0.91;
   } else {
-    // Very long paragraph
-    lengthScale = 0.75;
+    lengthScale = 0.86;
   }
 
-  // 4. Ultra-wide player dampening
-  if (isUltraWide && containerHeight < 240) {
-    lengthScale *= 0.90;
-  }
+  let computedSize = baseFontSize * containerScale * heightScale * lengthScale;
 
-  // 5. Combine scales with user base preference
-  let computedSize = baseFontSize * widthScale * heightScale * lengthScale;
-
-  // 6. Longest word safety check:
-  // Ensure the longest word fits within containerWidth with margins
+  // 4. Longest word safety check
   const badgeMaxWidthPct = isTinyScreen ? 94 : isSmallScreen ? 92 : isVertical ? 86 : 88;
-  const availableBadgeWidth = containerWidth * (badgeMaxWidthPct / 100) - (isSmallScreen ? 20 : 32);
-  const approxCharWidthRatio = 0.58; // Kurdish / Arabic glyph width ratio
+  const availableBadgeWidth = containerWidth * (badgeMaxWidthPct / 100) - (isSmallScreen ? 16 : 28);
+  const approxCharWidthRatio = 0.58;
   if (maxWordLen > 0) {
     const requiredWordWidth = maxWordLen * (computedSize * approxCharWidthRatio);
     if (requiredWordWidth > availableBadgeWidth && availableBadgeWidth > 80) {
@@ -201,20 +186,34 @@ export function calculateDynamicCaptionLayout(options: DynamicCaptionOptions): D
     }
   }
 
-  // 7. Clamp font size within safe readability boundaries
-  const minFont = isTinyScreen ? 11.0 : isSmallScreen ? 11.5 : 12.5;
-  const maxFont = isFullscreen ? Math.max(18, baseFontSize * 1.35) : baseFontSize * 1.15;
+  // 5. Readability Clamp for Medium font size:
+  // On mobile: guarantees a crisp, legible Medium size (14.0px - 15.5px)
+  // On desktop: 16.0px - 18.0px
+  const minFont = isTinyScreen ? 13.0 : isSmallScreen ? 14.0 : 14.5;
+  const maxFont = isFullscreen ? Math.max(20, baseFontSize * 1.35) : baseFontSize * 1.25;
   const fontSize = Number(Math.max(minFont, Math.min(maxFont, computedSize)).toFixed(1));
 
-  // 8. Line Height: tighter on small screens to conserve vertical height
-  const lineHeight = isTinyScreen ? 1.36 : isSmallScreen ? 1.40 : 1.48;
+  // 6. Line Height: compact & comfortable
+  const lineHeight = isSmallScreen ? 1.42 : 1.48;
 
-  // 9. Dynamic Safe Line Wrapping
+  // 7. Dynamic Padding: comfortable medium padding
+  let padding: string;
+  if (isTinyScreen) {
+    padding = "4px 10px";
+  } else if (isSmallScreen) {
+    padding = "5px 12px";
+  } else if (isVertical) {
+    padding = "6px 14px";
+  } else {
+    padding = "5px 14px";
+  }
+
+  // 8. Dynamic Safe Line Wrapping
   const effectiveCharWidth = fontSize * approxCharWidthRatio;
   const maxCharsPerLine = Math.max(16, Math.floor(availableBadgeWidth / effectiveCharWidth));
   const lines = wrapDynamicSoraniLines(text, maxCharsPerLine);
 
-  // 10. Dynamic Bottom Clearance
+  // 9. Dynamic Bottom Clearance
   // Ensures subtitles NEVER go under player controls or off the bottom edge
   let bottomPx: number;
   const actualControlsHeight = Math.max(48, Math.min(90, controlsBarHeight));
@@ -226,7 +225,7 @@ export function calculateDynamicCaptionLayout(options: DynamicCaptionOptions): D
   } else {
     // Controls are hidden: sit near bottom without clipping
     if (isVertical) {
-      bottomPx = isSmallScreen ? 26 : 34;
+      bottomPx = isSmallScreen ? 28 : 34;
     } else if (isTinyScreen) {
       bottomPx = 10;
     } else if (isSmallScreen) {
@@ -238,18 +237,6 @@ export function calculateDynamicCaptionLayout(options: DynamicCaptionOptions): D
 
   if (isFullscreen) {
     bottomPx += 10;
-  }
-
-  // 11. Dynamic Padding
-  let padding: string;
-  if (isTinyScreen) {
-    padding = "3px 8px";
-  } else if (isSmallScreen) {
-    padding = "4px 10px";
-  } else if (isVertical) {
-    padding = "6px 14px";
-  } else {
-    padding = "5px 13px";
   }
 
   return {

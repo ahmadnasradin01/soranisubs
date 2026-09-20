@@ -11,7 +11,6 @@ import {
 } from "./config";
 import {
   wrapSoraniLines,
-  spreadAndSplitLongCues,
   type SubtitleCue,
 } from "./soraniTranslation";
 
@@ -71,27 +70,11 @@ export async function extractMonoAudio(
     const chunks: Float32Array[] = [];
     let totalFrames = 0;
     let sourceRate = TARGET_SAMPLE_RATE;
-    let isFirst = true;
 
     for await (const wrapped of sink.buffers(0, duration)) {
       if (signal?.aborted) throw new DOMException("Cancelled", "AbortError");
       const buffer = wrapped.buffer;
       sourceRate = buffer.sampleRate;
-
-      // Compensate for initial audio PTS presentation offset if present in the video container.
-      // Many MP4/MOV/WebM containers start audio with a small offset (e.g. 50ms - 350ms).
-      // Inserting leading silence ensures the audio waveform time t=0 aligns 100% with the video presentation time t=0.
-      if (isFirst) {
-        isFirst = false;
-        const initialOffsetSec = wrapped.timestamp;
-        if (initialOffsetSec > 0.005) {
-          const padFrames = Math.round(initialOffsetSec * buffer.sampleRate);
-          if (padFrames > 0) {
-            chunks.push(new Float32Array(padFrames));
-            totalFrames += padFrames;
-          }
-        }
-      }
 
       // Downmix to mono
       const frames = buffer.length;
@@ -174,29 +157,38 @@ export function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
-const DIRECT_SUBTITLES_PROMPT = `You are a world-class audio subtitler and precision timing specialist for Sorani Kurdish (کوردیی ناوەندی / Central Kurdish / ckb).
-Listen intently to the acoustic audio track. Detect spoken speech with exact millisecond-level acoustic timestamps, and translate directly into authentic, natural Sorani Kurdish subtitles in Central Kurdish Arabic script (ئەلفوبێی کوردی).
+const DIRECT_SUBTITLES_PROMPT = `You are a precision audio subtitler and acoustic timing expert for Sorani Kurdish (کوردیی ناوەندی / Central Kurdish / ckb).
+Listen intently to the acoustic audio track (speech, song lyrics, vocals with music background).
+Detect spoken or sung phrases with millisecond-exact vocal onset and release boundaries, and translate directly into authentic Sorani Kurdish subtitles in Central Kurdish Arabic script (ئەلفوبێی کوردی).
 
-CRITICAL VOICE-SYNCHRONIZATION & TIMING RULES:
-1. PRECISE ACOUSTIC BOUNDARIES (High Precision Floats):
-   - "start": EXACT second (float with 2 decimals, e.g. 2.14) when the speaker begins vocalizing the first syllable of this segment.
-   - "end": EXACT second (float with 2 decimals, e.g. 4.68) when the speaker finishes pronouncing the last syllable of this segment.
-   - NEVER round timestamps to coarse full seconds (never write 2.0 or 5.0 unless speech actually starts at that exact boundary).
-2. NATURAL PHRASE SEGMENTATION (2.0 to 4.5 seconds per cue):
-   - Keep every cue short, crisp, and comfortable to read on screen (maximum 5 to 8 words).
-   - NEVER create a single long cue exceeding 5 seconds!
-   - Break speech strictly at the speaker's natural acoustic breath pauses or clause boundaries so each subtitle appears in perfect sync with the voice.
-3. SILENCE & PAUSES:
-   - NEVER keep a subtitle active during silence, music breaks, or pauses longer than 0.25s.
-   - NEVER start a subtitle before speech begins.
-   - If the speaker pauses between sentences, end the cue immediately. Start a new cue when speech resumes.
+CRITICAL ACOUSTIC SYNCHRONIZATION & LYRICS TIMING RULES:
+1. EXACT VOCAL ONSET & RELEASE (High-Precision Floats):
+   - "start": The EXACT second (float with 2 decimal places, e.g. 2.14) when the speaker or singer begins vocalizing the first syllable of this line.
+     * NEVER start before the voice/singing begins!
+     * NEVER display the subtitle prematurely while the speaker is silent or while music is playing!
+   - "end": The EXACT second (float with 2 decimal places, e.g. 4.38) when the speaker or singer finishes vocalizing the last syllable.
+     * NEVER keep a subtitle active during instrumental breaks, guitar/piano interludes, or silence!
+   - NEVER round timestamps to full integers (never output 2.0 or 5.0 unless voice strictly starts/stops at that exact second).
+
+2. SONG LYRICS & MUSICAL TIMING:
+   - For songs, poetry, and music videos: each sung lyric line, verse phrase, or chorus bar MUST be its own distinct subtitle cue.
+   - If a lyric line is sung in 1.2 seconds, keep "start" and "end" strictly matching those 1.2 seconds! Do NOT stretch it into the music!
+   - NEVER show a lyric line before the singer starts singing!
+   - If there is an instrumental music break, guitar solo, beat, or pause between lines, NO subtitle should be active during that break!
+
+3. SPOKEN SPEECH & DIALOGUE:
+   - Break continuous speech at the speaker's natural acoustic breath pauses or clause boundaries (typically 1.5 to 3.8 seconds per cue, 4 to 8 words).
+   - If the speaker pauses between sentences, end the current cue immediately. Start a new cue when speech resumes.
+
 4. STRICT CHRONOLOGY:
    - All cues MUST be in strict chronological order with "start" strictly less than "end".
+   - Adjacent cues must not overlap.
+
 5. AUTHENTIC SORANI KURDISH:
    - Natural spoken Kurdish register appropriate for video subtitles.
    - Always use proper Kurdish alphabet characters (پ، چ، ژ، گ، ڤ، ڕ، ڵ، ۆ، ێ، ە).
    - Preserve proper nouns, numbers, and technical terms accurately.
-   - Also provide "source_text" with the original spoken words.`;
+   - Also provide "source_text" with the original spoken/sung words.`;
 
 const DIRECT_SUBTITLES_SCHEMA = {
   type: "OBJECT",
@@ -437,6 +429,8 @@ export async function generateSoraniSubtitlesDirect(
           responseSchema: DIRECT_SUBTITLES_SCHEMA,
         };
 
+        // For thinking models, allocate a focused thinking budget (1024 tokens)
+        // to enable deep audio acoustic waveform reasoning and exact millisecond time alignment
         if (
           model.includes("robotics") ||
           model.includes("preview") ||
@@ -444,7 +438,7 @@ export async function generateSoraniSubtitlesDirect(
           model.includes("3.8") ||
           model.includes("3.7")
         ) {
-          generationConfig.thinkingConfig = { thinkingBudget: 0 };
+          generationConfig.thinkingConfig = { thinkingBudget: 1024 };
         }
 
         let res = await fetch(url, {
@@ -585,25 +579,17 @@ export async function generateSoraniSubtitlesDirect(
     .filter((c) => c.kurdishText.length > 0 && c.end > c.start)
     .sort((a, b) => a.start - b.start);
 
-  // Intelligently split long utterances into clean sequential pieces to prevent screen crowding
-  const finalizedCues = spreadAndSplitLongCues(parsedCues, 4.4, 44);
+  // Use the exact acoustic timestamps directly from Gemini without artificial splitting or shifting
+  const finalizedCues = parsedCues;
 
-  // Fix minor timestamp overlaps between adjacent cues and ensure comfortable reading duration
+  // Resolve any slight overlap between adjacent cues without artificially shifting boundaries
   for (let i = 0; i < finalizedCues.length; i++) {
     const current = finalizedCues[i];
     const next = finalizedCues[i + 1];
 
-    // Ensure minimum duration of 0.8s for short utterances (unless next cue starts earlier)
-    if (current.end - current.start < 0.8) {
-      const maxEnd = next ? Math.min(current.start + 0.8, next.start - 0.04) : current.start + 0.8;
-      if (maxEnd > current.start) {
-        current.end = Number(Math.min(duration, maxEnd).toFixed(2));
-      }
-    }
-
-    // Resolve any slight overlap between adjacent cues
+    // Resolve overlap: cue must not step into the next speaker's onset
     if (next && current.end > next.start) {
-      current.end = Number(Math.max(current.start + 0.3, next.start - 0.04).toFixed(2));
+      current.end = Number(Math.max(current.start + 0.1, next.start - 0.02).toFixed(2));
     }
   }
 
