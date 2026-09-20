@@ -22,6 +22,7 @@
   } from "./lib/config";
   import { TOP_50_KURDISH_FONTS, type KurdishFontSpecimen } from "./lib/kurdishFonts";
   import { loadFontFile, loadWebFont, type CustomFontRecord } from "./lib/customFonts";
+  import { calculateDynamicCaptionLayout } from "./lib/dynamicCaptionResizer";
 
   // --- Workflow Phases ---
   type WorkflowPhase = "upload" | "processing" | "studio";
@@ -57,7 +58,7 @@
   // --- Subtitle Customization State ---
   let uploadedFonts: CustomFontRecord[] = $state([]);
   let selectedFontId = $state("Noto Kufi Arabic");
-  let subtitleFontSize = $state(18); // px (smaller, cleaner caption by default)
+  let subtitleFontSize = $state(15); // px (crisp, modern caption default)
   let subtitleAlign: "center" | "left" | "right" = $state("center");
   let subtitleBg: "box" | "shadow" = $state("box");
 
@@ -93,8 +94,41 @@
   // --- References ---
   let videoElement: HTMLVideoElement | null = $state(null);
   let playerContainer: HTMLElement | null = $state(null);
+  let controlsBarElement: HTMLElement | null = $state(null);
   let scrubberTrack: HTMLElement | null = $state(null);
   let abortController: AbortController | null = null;
+
+  // Real-time responsive player & controls dimensions for smart dynamic subtitle resizer
+  let playerWidth = $state(640);
+  let playerHeight = $state(360);
+  let controlsBarHeight = $state(60);
+
+  $effect(() => {
+    if (!playerContainer) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.contentRect) {
+          playerWidth = Math.round(entry.contentRect.width);
+          playerHeight = Math.round(entry.contentRect.height);
+        }
+      }
+    });
+    ro.observe(playerContainer);
+    return () => ro.disconnect();
+  });
+
+  $effect(() => {
+    if (!controlsBarElement) return;
+    const ro = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        if (entry.contentRect) {
+          controlsBarHeight = Math.round(entry.contentRect.height);
+        }
+      }
+    });
+    ro.observe(controlsBarElement);
+    return () => ro.disconnect();
+  });
 
   // --- Subtitle Editing & Selection State ---
   let selectedCueIndex: number | null = $state(null);
@@ -111,6 +145,20 @@
       }
     }
     return null;
+  });
+
+  // Smart dynamic subtitle layout calculation based on screen, container dimensions, aspect ratio, text length & wordings
+  let dynamicCaptionLayout = $derived.by(() => {
+    return calculateDynamicCaptionLayout({
+      containerWidth: playerWidth,
+      containerHeight: playerHeight,
+      videoAspectRatio,
+      captionText: activeCue ? activeCue.kurdishText : "",
+      baseFontSize: subtitleFontSize,
+      controlsVisible,
+      controlsBarHeight,
+      isFullscreen,
+    });
   });
 
   let activeCueIndex = $derived.by(() => {
@@ -733,8 +781,8 @@
   // Build ASS template matching the user's custom font, size, align, and bg
   function buildCustomAssTemplate(): string {
     const alignmentNum = subtitleAlign === "left" ? 1 : subtitleAlign === "right" ? 3 : 2;
-    // Standard subtitle size relative to video height (clean ~3.8% screen height)
-    const sizePct = Math.max(2.6, Math.min(5.5, (subtitleFontSize / 18) * 3.8));
+    // Standard subtitle size relative to video height (clean ~3.5% screen height)
+    const sizePct = Math.max(2.4, Math.min(5.2, (subtitleFontSize / 15) * 3.5));
     const isBox = subtitleBg === "box";
 
     const activeCustom = uploadedFonts.find((f) => f.id === selectedFontId);
@@ -1140,16 +1188,17 @@
             class:align-left={subtitleAlign === "left"}
             class:align-center={subtitleAlign === "center"}
             class:align-right={subtitleAlign === "right"}
+            style="bottom: {dynamicCaptionLayout.bottomPx}px;"
           >
             {#if activeCue}
               <div
                 class="active-subtitle-badge"
                 class:badge-boxed={subtitleBg === "box"}
                 class:badge-shadow={subtitleBg === "shadow"}
-                style="font-family: {selectedFontFamily}; --sub-size: {subtitleFontSize}px;"
+                style="font-family: {selectedFontFamily}; font-size: {dynamicCaptionLayout.fontSize}px; line-height: {dynamicCaptionLayout.lineHeight}; max-width: {dynamicCaptionLayout.maxWidthPct}%; padding: {dynamicCaptionLayout.padding};"
                 dir="rtl"
               >
-                {#each activeCue.lines as line}
+                {#each dynamicCaptionLayout.lines as line}
                   <div>{line}</div>
                 {/each}
               </div>
@@ -1159,7 +1208,11 @@
           <!-- Custom Player Controls Bar -->
           <!-- svelte-ignore a11y_click_events_have_key_events -->
           <!-- svelte-ignore a11y_no_static_element_interactions -->
-          <div class="player-controls-bar" onclick={(e) => e.stopPropagation()}>
+          <div
+            class="player-controls-bar"
+            bind:this={controlsBarElement}
+            onclick={(e) => e.stopPropagation()}
+          >
             <!-- Scrubber Track with Real-Time Touch Dragging -->
             <div
               class="scrubber-track"
@@ -1288,14 +1341,14 @@
                 type="button"
                 class="size-nudge-btn"
                 title="Decrease font size"
-                onclick={() => subtitleFontSize = Math.max(12, subtitleFontSize - 1)}
+                onclick={() => subtitleFontSize = Math.max(11, subtitleFontSize - 1)}
               >&minus;</button>
               <input
                 id="font-size-slider"
                 type="range"
                 class="customizer-range"
-                min="12"
-                max="36"
+                min="11"
+                max="32"
                 step="1"
                 bind:value={subtitleFontSize}
                 oninput={(e) => subtitleFontSize = Number((e.target as HTMLInputElement).value)}
@@ -1304,7 +1357,7 @@
                 type="button"
                 class="size-nudge-btn"
                 title="Increase font size"
-                onclick={() => subtitleFontSize = Math.min(36, subtitleFontSize + 1)}
+                onclick={() => subtitleFontSize = Math.min(32, subtitleFontSize + 1)}
               >+</button>
             </div>
           </div>

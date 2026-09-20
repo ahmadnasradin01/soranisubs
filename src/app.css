@@ -571,28 +571,13 @@ html, body {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 78px;
+  bottom: 72px;
   pointer-events: none;
   z-index: 10;
   display: flex;
   padding: 0 16px;
   box-sizing: border-box;
-  transition: bottom 0.28s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-/* When controls hide, drop subtitles gracefully down to maximize visible video area without clipping */
-.player-container.controls-hidden .video-subtitle-overlay {
-  bottom: 24px;
-}
-
-/* Vertical / Portrait Video Enhancements (9:16 Shorts/Reels/TikTok) */
-.player-container.is-vertical .video-subtitle-overlay {
-  bottom: 92px;
-  padding: 0 20px;
-}
-
-.player-container.is-vertical.controls-hidden .video-subtitle-overlay {
-  bottom: 38px;
+  transition: bottom 0.22s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .video-subtitle-overlay.align-center {
@@ -611,19 +596,19 @@ html, body {
 }
 
 .active-subtitle-badge {
-  font-size: clamp(13px, var(--sub-size, 18px), min(var(--sub-size, 18px), 6vw));
   max-width: 88%;
-  line-height: 1.48;
+  line-height: 1.44;
   direction: rtl;
   overflow-wrap: anywhere;
   word-break: break-word;
   text-wrap: balance;
-  transition: all 0.15s ease;
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  transition: font-size 0.15s ease, line-height 0.15s ease, padding 0.15s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
   box-sizing: border-box;
+  max-height: 48%;
+  overflow: hidden;
 }
 
 .active-subtitle-badge.badge-boxed {
@@ -820,24 +805,15 @@ html, body {
 .player-container:fullscreen .video-subtitle-overlay,
 .player-container:-webkit-full-screen .video-subtitle-overlay,
 .player-container.is-fullscreen .video-subtitle-overlay {
-  bottom: max(90px, calc(env(safe-area-inset-bottom, 0px) + 80px));
   padding-left: max(24px, env(safe-area-inset-left, 24px));
   padding-right: max(24px, env(safe-area-inset-right, 24px));
-}
-
-.player-container:fullscreen.controls-hidden .video-subtitle-overlay,
-.player-container:-webkit-full-screen.controls-hidden .video-subtitle-overlay,
-.player-container.is-fullscreen.controls-hidden .video-subtitle-overlay {
-  bottom: max(34px, calc(env(safe-area-inset-bottom, 0px) + 26px));
 }
 
 .player-container:fullscreen .active-subtitle-badge,
 .player-container:-webkit-full-screen .active-subtitle-badge,
 .player-container.is-fullscreen .active-subtitle-badge {
-  font-size: clamp(16px, calc(var(--sub-size, 18px) * 1.3), 4vw) !important;
   max-width: 86%;
   line-height: 1.48;
-  padding: 8px 20px;
 }
 
 /* --- Subtitle Customization Toolbar --- */
@@ -1357,20 +1333,7 @@ html, body {
   }
 
   .video-subtitle-overlay {
-    bottom: 76px;
-    padding: 0 12px;
-  }
-
-  .player-container.controls-hidden .video-subtitle-overlay {
-    bottom: 20px;
-  }
-
-  .player-container.is-vertical .video-subtitle-overlay {
-    bottom: 86px;
-  }
-
-  .player-container.is-vertical.controls-hidden .video-subtitle-overlay {
-    bottom: 30px;
+    padding: 0 10px;
   }
 
   .player-controls-bar {
@@ -1436,27 +1399,12 @@ html, body {
 @media (max-width: 380px) {
   /* Extra compact display optimization for small phone displays (e.g. iPhone SE, 360px Android) */
   .active-subtitle-badge {
-    max-width: 95%;
-    padding: 3px 10px;
+    max-width: 96%;
     border-radius: 4px;
-    line-height: 1.45;
   }
 
   .video-subtitle-overlay {
-    bottom: 72px;
-    padding: 0 8px;
-  }
-
-  .player-container.controls-hidden .video-subtitle-overlay {
-    bottom: 16px;
-  }
-
-  .player-container.is-vertical .video-subtitle-overlay {
-    bottom: 80px;
-  }
-
-  .player-container.is-vertical.controls-hidden .video-subtitle-overlay {
-    bottom: 26px;
+    padding: 0 6px;
   }
 
   .brand-title {

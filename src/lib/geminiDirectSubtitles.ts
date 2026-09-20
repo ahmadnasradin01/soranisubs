@@ -568,7 +568,7 @@ export async function generateSoraniSubtitlesDirect(
   }
 
   // 4. Validate, wrap lines, and preserve authentic acoustic timestamps
-  const finalizedCues: SubtitleCue[] = parsedResult.cues
+  const parsedCues: SubtitleCue[] = parsedResult.cues
     .map((c, idx) => {
       const kurdish = (c.kurdish_text || "").trim();
       const start = Math.max(0, parseFloat(String(c.start)) || 0);
@@ -584,6 +584,9 @@ export async function generateSoraniSubtitlesDirect(
     })
     .filter((c) => c.kurdishText.length > 0 && c.end > c.start)
     .sort((a, b) => a.start - b.start);
+
+  // Intelligently split long utterances into clean sequential pieces to prevent screen crowding
+  const finalizedCues = spreadAndSplitLongCues(parsedCues, 4.4, 44);
 
   // Fix minor timestamp overlaps between adjacent cues and ensure comfortable reading duration
   for (let i = 0; i < finalizedCues.length; i++) {
