@@ -21,3 +21,5 @@ public/ort/
 *.log
 .DS_Store
 
+.vercel
+.env*
