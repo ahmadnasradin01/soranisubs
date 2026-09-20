@@ -376,11 +376,7 @@ export async function generateSoraniSubtitlesDirect(
     ...FALLBACK_GEMINI_MODELS.filter((m) => m !== primaryModel),
   ];
   const apiKeys = getAllGeminiApiKeys();
-  if (apiKeys.length === 0) {
-    throw new Error(
-      "No Gemini API key found. Please open Settings (⚙️) to enter your Gemini API key, or set VITE_GEMINI_API_KEY in your environment.",
-    );
-  }
+  const keysToTry = apiKeys.length > 0 ? apiKeys : ["__SERVER_PROXY__"];
 
   onProgress?.({
     stage: "translating",
@@ -404,8 +400,8 @@ export async function generateSoraniSubtitlesDirect(
     const model = candidateModels[mIdx];
     if (signal?.aborted) throw new DOMException("Cancelled", "AbortError");
 
-    for (let kIdx = 0; kIdx < apiKeys.length; kIdx++) {
-      const currentKey = apiKeys[kIdx];
+    for (let kIdx = 0; kIdx < keysToTry.length; kIdx++) {
+      const currentKey = keysToTry[kIdx];
       if (signal?.aborted) throw new DOMException("Cancelled", "AbortError");
 
       if (mIdx > 0 || kIdx > 0) {
@@ -415,7 +411,7 @@ export async function generateSoraniSubtitlesDirect(
           fraction: 0.65 + mIdx * 0.03,
           note:
             kIdx > 0
-              ? `Retrying ${model} with alternate API key (${kIdx + 1}/${apiKeys.length})${prevErrNote}...`
+              ? `Retrying ${model} with alternate key (${kIdx + 1}/${keysToTry.length})${prevErrNote}...`
               : `Switching to model ${model}${prevErrNote}...`,
         });
       }
@@ -429,7 +425,10 @@ export async function generateSoraniSubtitlesDirect(
       if (signal) signal.addEventListener("abort", onUserAbort);
 
       try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${currentKey}`;
+        const isServerProxy = currentKey === "__SERVER_PROXY__";
+        const url = isServerProxy
+          ? "/api/gemini"
+          : `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${currentKey}`;
         
         // Prepare generationConfig with thinkingBudget: 0 for thinking/preview models
         // to cut response latency from ~40s to ~9-17s with peak Kurdish accuracy
@@ -452,6 +451,7 @@ export async function generateSoraniSubtitlesDirect(
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            model,
             contents: [
               {
                 parts: [
