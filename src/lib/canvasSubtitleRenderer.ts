@@ -6,8 +6,10 @@
  * 1. Exact Kurdish font (Noto Kufi Arabic, Noto Sans Arabic, KurdFonts, or custom upload)
  * 2. Exact dynamic sizing scaled to native video resolution
  * 3. Exact balanced Kurdish line wrapping
- * 4. Exact modern rounded pill box (rgba(0,0,0,0.84) with blur shadow) or crisp outline
- * 5. Native browser HarfBuzz/CoreText RTL shaping
+ * 4. Exact modern rounded pill box or crisp outline
+ * 5. Full vertical movement / position customization across the screen
+ * 6. Full font color, background color, and opacity customization
+ * 7. Native browser HarfBuzz/CoreText RTL shaping
  */
 
 import { calculateDynamicCaptionLayout } from "./dynamicCaptionResizer";
@@ -20,6 +22,16 @@ export interface SubtitleBurnConfig {
   align: "left" | "center" | "right";
   playerWidth?: number;
   playerHeight?: number;
+  /** Vertical position percentage from bottom (4% to 88%) */
+  verticalPosition?: number;
+  /** Text font color hex code (e.g. #FFFFFF) */
+  textColor?: string;
+  /** Box background color hex code (e.g. #000000) */
+  bgColor?: string;
+  /** Box background opacity (0.2 to 1.0) */
+  bgOpacity?: number;
+  /** Outline / shadow color hex code (e.g. #000000) */
+  outlineColor?: string;
 }
 
 interface PrecomputedCueItem {
@@ -36,6 +48,21 @@ interface PrecomputedCueItem {
   paddingX: number;
   paddingY: number;
   scale: number;
+}
+
+export function hexToRgba(hex: string, alpha: number = 1): string {
+  if (!hex || typeof hex !== "string") return `rgba(0, 0, 0, ${alpha})`;
+  let c = hex.replace("#", "").trim();
+  if (c.length === 3) {
+    c = c.split("").map((ch) => ch + ch).join("");
+  }
+  if (c.length !== 6) {
+    return `rgba(0, 0, 0, ${alpha})`;
+  }
+  const r = parseInt(c.substring(0, 2), 16);
+  const g = parseInt(c.substring(2, 4), 16);
+  const b = parseInt(c.substring(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${Math.max(0, Math.min(1, alpha))})`;
 }
 
 function drawRoundedRect(
@@ -82,6 +109,11 @@ export function createSubtitleCanvasRenderer(
     align = "center",
     playerWidth = 640,
     playerHeight = 360,
+    verticalPosition = 12,
+    textColor = "#FFFFFF",
+    bgColor = "#000000",
+    bgOpacity = 0.84,
+    outlineColor = "#000000",
   } = config;
 
   const aspectRatio = videoWidth / videoHeight;
@@ -119,7 +151,6 @@ export function createSubtitleCanvasRenderer(
     let fontSizePx = Math.round(layout.fontSize * scale);
     const lineHeightRatio = layout.lineHeight || 1.44;
     let lineHeightPx = Math.round(fontSizePx * lineHeightRatio);
-    const bottomPx = Math.round(layout.bottomPx * scale);
     const borderRadius = Math.max(4, Math.round(6 * scale));
     const isSmallContainer = refWidth < 480;
     const paddingX = Math.round((isSmallContainer ? 12 : 14) * scale);
@@ -157,7 +188,20 @@ export function createSubtitleCanvasRenderer(
       boxX = Math.round(videoWidth - boxWidth - paddingX * 1.5);
     }
 
-    const boxY = Math.round(videoHeight - bottomPx - boxHeight);
+    // Vertical Positioning based on customizable percentage or layout fallback
+    let boxY: number;
+    if (typeof verticalPosition === "number" && verticalPosition >= 0) {
+      const bottomMarginPx = Math.round(videoHeight * (verticalPosition / 100));
+      boxY = Math.round(videoHeight - bottomMarginPx - boxHeight);
+    } else {
+      const bottomPx = Math.round(layout.bottomPx * scale);
+      boxY = Math.round(videoHeight - bottomPx - boxHeight);
+    }
+
+    // Clamp boxY safely within frame bounds
+    const minSafeY = Math.round(videoHeight * 0.02);
+    const maxSafeY = Math.max(minSafeY, videoHeight - boxHeight - minSafeY);
+    boxY = Math.max(minSafeY, Math.min(maxSafeY, boxY));
 
     precomputed.push({
       start: cue.start,
@@ -176,51 +220,21 @@ export function createSubtitleCanvasRenderer(
     });
   }
 
-  // Sort by start timestamp for binary / sequential search
+  // Sort by start timestamp
   precomputed.sort((a, b) => a.start - b.start);
-
-  let cachedIdx = 0;
-
-  function findActiveItem(time: number): PrecomputedCueItem | null {
-    if (precomputed.length === 0) return null;
-
-    // Check cached item first (handles consecutive video frames)
-    if (cachedIdx >= 0 && cachedIdx < precomputed.length) {
-      const c = precomputed[cachedIdx];
-      if (time >= c.start && time <= c.end) return c;
-      if (
-        cachedIdx + 1 < precomputed.length &&
-        time >= precomputed[cachedIdx + 1].start &&
-        time <= precomputed[cachedIdx + 1].end
-      ) {
-        cachedIdx++;
-        return precomputed[cachedIdx];
-      }
-    }
-
-    // Binary search fallback
-    let low = 0;
-    let high = precomputed.length - 1;
-    while (low <= high) {
-      const mid = (low + high) >> 1;
-      const item = precomputed[mid];
-      if (time >= item.start && time <= item.end) {
-        cachedIdx = mid;
-        return item;
-      }
-      if (time < item.start) {
-        high = mid - 1;
-      } else {
-        low = mid + 1;
-      }
-    }
-
-    return null;
-  }
 
   return {
     drawAt(ctx: CanvasRenderingContext2D, timestamp: number) {
-      const item = findActiveItem(timestamp);
+      if (precomputed.length === 0) return;
+
+      // Sequential search (fast & foolproof)
+      let item: PrecomputedCueItem | null = null;
+      for (let i = 0; i < precomputed.length; i++) {
+        if (timestamp >= precomputed[i].start && timestamp <= precomputed[i].end) {
+          item = precomputed[i];
+          break;
+        }
+      }
       if (!item) return;
 
       const {
@@ -243,7 +257,7 @@ export function createSubtitleCanvasRenderer(
         ctx.shadowColor = "rgba(0, 0, 0, 0.6)";
         ctx.shadowBlur = Math.round(14 * itemScale);
         ctx.shadowOffsetY = Math.round(3 * itemScale);
-        ctx.fillStyle = "rgba(0, 0, 0, 0.84)";
+        ctx.fillStyle = hexToRgba(bgColor, bgOpacity);
         drawRoundedRect(ctx, boxX, boxY, boxWidth, boxHeight, borderRadius);
         ctx.fill();
         ctx.restore();
@@ -252,7 +266,7 @@ export function createSubtitleCanvasRenderer(
         ctx.save();
         ctx.font = `600 ${fontSizePx}px ${fontFamily}`;
         ctx.direction = "rtl";
-        ctx.fillStyle = "#ffffff";
+        ctx.fillStyle = textColor;
         ctx.textBaseline = "middle";
 
         for (let i = 0; i < lines.length; i++) {
@@ -295,25 +309,25 @@ export function createSubtitleCanvasRenderer(
             textX = boxX + boxWidth - paddingX;
           }
 
-          // Pass 1: Deep ambient drop shadow
+          // Pass 1: Deep ambient drop shadow with outlineColor
           ctx.save();
-          ctx.shadowColor = "rgba(0, 0, 0, 0.95)";
+          ctx.shadowColor = hexToRgba(outlineColor, 0.95);
           ctx.shadowBlur = Math.round(8 * itemScale);
           ctx.shadowOffsetY = Math.round(2 * itemScale);
-          ctx.fillStyle = "#000000";
+          ctx.fillStyle = outlineColor;
           ctx.fillText(line, textX, lineY);
           ctx.restore();
 
-          // Pass 2: High-contrast crisp black outline
+          // Pass 2: High-contrast crisp outline
           ctx.save();
-          ctx.strokeStyle = "#000000";
+          ctx.strokeStyle = outlineColor;
           ctx.lineWidth = Math.max(2, Math.round(3.5 * itemScale));
           ctx.lineJoin = "round";
           ctx.strokeText(line, textX, lineY);
           ctx.restore();
 
-          // Pass 3: Pure white crisp text
-          ctx.fillStyle = "#ffffff";
+          // Pass 3: Crisp text with chosen textColor
+          ctx.fillStyle = textColor;
           ctx.fillText(line, textX, lineY);
         }
         ctx.restore();

@@ -23,6 +23,8 @@
   import { TOP_50_KURDISH_FONTS, type KurdishFontSpecimen } from "./lib/kurdishFonts";
   import { loadFontFile, loadWebFont, type CustomFontRecord } from "./lib/customFonts";
   import { calculateDynamicCaptionLayout } from "./lib/dynamicCaptionResizer";
+  import { parseSrtOrVtt } from "./lib/srtParser";
+  import { hexToRgba } from "./lib/canvasSubtitleRenderer";
 
   // --- Workflow Phases ---
   type WorkflowPhase = "upload" | "processing" | "studio";
@@ -61,6 +63,16 @@
   let subtitleFontSize = $state(16); // px (crisp medium caption default)
   let subtitleAlign: "center" | "left" | "right" = $state("center");
   let subtitleBg: "box" | "shadow" = $state("box");
+  let subtitleVerticalPosition = $state(12); // % distance from bottom (4 to 88)
+  let subtitleTextColor = $state("#ffffff");
+  let subtitleBgColor = $state("#000000");
+  let subtitleBgOpacity = $state(0.84);
+  let subtitleOutlineColor = $state("#000000");
+  let customizerTab: "text" | "position" | "colors" = $state("text");
+
+  // --- SRT / VTT Upload State ---
+  let srtFileInput: HTMLInputElement | null = $state(null);
+  let srtUploadStatus = $state("");
 
   // --- Font Upload & Showcase States ---
   let fontUploadInput: HTMLInputElement | null = $state(null);
@@ -835,6 +847,38 @@
     downloadTextFile(vtt, `${base}_sorani.vtt`, "text/vtt;charset=utf-8");
   }
 
+  function triggerSrtUpload() {
+    srtFileInput?.click();
+  }
+
+  function handleSrtFileUpload(event: Event) {
+    const input = event.target as HTMLInputElement;
+    const file = input.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const text = e.target?.result as string;
+        if (!text) throw new Error("Empty file content");
+        const parsed = parseSrtOrVtt(text);
+        if (parsed.length === 0) {
+          throw new Error("No valid subtitles found in the file. Please ensure it is a valid .srt or .vtt file.");
+        }
+        cues = parsed as any;
+        selectedCueIndex = 0;
+        phase = "studio";
+        srtUploadStatus = `✓ Successfully imported ${parsed.length} subtitles from "${file.name}"`;
+        setTimeout(() => { srtUploadStatus = ""; }, 4500);
+      } catch (err: any) {
+        alert(`Failed to import subtitle file: ${err.message || "Invalid format"}`);
+      } finally {
+        input.value = "";
+      }
+    };
+    reader.readAsText(file);
+  }
+
   async function exportBurnedVideo() {
     if (!videoFile || cues.length === 0) return;
     isBurning = true;
@@ -865,6 +909,11 @@
           align: subtitleAlign,
           playerWidth,
           playerHeight,
+          verticalPosition: subtitleVerticalPosition,
+          textColor: subtitleTextColor,
+          bgColor: subtitleBgColor,
+          bgOpacity: subtitleBgOpacity,
+          outlineColor: subtitleOutlineColor,
         },
         width: videoWidth,
         height: videoHeight,
@@ -1193,14 +1242,24 @@
             class:align-left={subtitleAlign === "left"}
             class:align-center={subtitleAlign === "center"}
             class:align-right={subtitleAlign === "right"}
-            style="bottom: {dynamicCaptionLayout.bottomPx}px;"
+            style="bottom: {controlsVisible ? `max(${controlsBarHeight + 10}px, ${subtitleVerticalPosition}%)` : `${subtitleVerticalPosition}%`};"
           >
             {#if activeCue}
               <div
                 class="active-subtitle-badge"
                 class:badge-boxed={subtitleBg === "box"}
                 class:badge-shadow={subtitleBg === "shadow"}
-                style="font-family: {selectedFontFamily}; font-size: {dynamicCaptionLayout.fontSize}px; line-height: {dynamicCaptionLayout.lineHeight}; max-width: {dynamicCaptionLayout.maxWidthPct}%; padding: {dynamicCaptionLayout.padding};"
+                style="
+                  font-family: {selectedFontFamily};
+                  font-size: {dynamicCaptionLayout.fontSize}px;
+                  line-height: {dynamicCaptionLayout.lineHeight};
+                  max-width: {dynamicCaptionLayout.maxWidthPct}%;
+                  padding: {dynamicCaptionLayout.padding};
+                  color: {subtitleTextColor};
+                  {subtitleBg === 'box'
+                    ? `background-color: ${hexToRgba(subtitleBgColor, subtitleBgOpacity)}; box-shadow: 0 4px 18px rgba(0, 0, 0, 0.6);`
+                    : `text-shadow: 0 2px 4px ${subtitleOutlineColor}, 0 0 8px ${subtitleOutlineColor}, 1px 1px 2px ${subtitleOutlineColor}, -1px -1px 2px ${subtitleOutlineColor}, 1px -1px 2px ${subtitleOutlineColor}, -1px 1px 2px ${subtitleOutlineColor};`}
+                "
                 dir="rtl"
               >
                 {#each dynamicCaptionLayout.lines as line}
@@ -1316,103 +1375,306 @@
           </div>
         </div>
 
-        <!-- Subtitle Customization Toolbar -->
-        <div class="customizer-toolbar">
-          <div class="customizer-group font-action-group">
-            <span class="customizer-label">Font</span>
+        <!-- Subtitle Customizer Card with Segmented Tabs -->
+        <div class="customizer-card">
+          <!-- Tab Navigation -->
+          <div class="customizer-tabs">
             <button
               type="button"
-              class="btn-change-font"
-              onclick={() => fontShowcaseOpen = true}
-              title="Change Subtitle Font"
+              class="customizer-tab-btn"
+              class:active={customizerTab === "text"}
+              onclick={() => customizerTab = "text"}
             >
-              <span class="font-icon-badge">Aa</span>
-              <span class="font-current-name">{activeFontDisplayName}</span>
-              <span class="font-change-tag">Change</span>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="4 7 4 4 20 4 20 7"></polyline>
+                <line x1="9" y1="20" x2="15" y2="20"></line>
+                <line x1="12" y1="4" x2="12" y2="20"></line>
+              </svg>
+              <span>Font & Size</span>
             </button>
-            <input
-              type="file"
-              accept=".ttf,.otf,.woff,.woff2"
-              style="display: none;"
-              bind:this={fontUploadInput}
-              onchange={onFontFileChange}
-            />
+
+            <button
+              type="button"
+              class="customizer-tab-btn"
+              class:active={customizerTab === "position"}
+              onclick={() => customizerTab = "position"}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="8 18 12 22 16 18"></polyline>
+                <polyline points="8 6 12 2 16 6"></polyline>
+                <line x1="12" y1="2" x2="12" y2="22"></line>
+              </svg>
+              <span>Position</span>
+            </button>
+
+            <button
+              type="button"
+              class="customizer-tab-btn"
+              class:active={customizerTab === "colors"}
+              onclick={() => customizerTab = "colors"}
+            >
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <circle cx="12" cy="12" r="10"></circle>
+                <path d="M12 2a10 10 0 0 1 0 20v-20z"></path>
+              </svg>
+              <span>Colors & Style</span>
+            </button>
           </div>
 
-          <div class="customizer-group size-group">
-            <label class="customizer-label" for="font-size-slider">Size ({subtitleFontSize}px)</label>
-            <div class="size-controls-row">
-              <button
-                type="button"
-                class="size-nudge-btn"
-                title="Decrease font size"
-                onclick={() => subtitleFontSize = Math.max(12, subtitleFontSize - 1)}
-              >&minus;</button>
-              <input
-                id="font-size-slider"
-                type="range"
-                class="customizer-range"
-                min="12"
-                max="34"
-                step="1"
-                bind:value={subtitleFontSize}
-                oninput={(e) => subtitleFontSize = Number((e.target as HTMLInputElement).value)}
-              />
-              <button
-                type="button"
-                class="size-nudge-btn"
-                title="Increase font size"
-                onclick={() => subtitleFontSize = Math.min(34, subtitleFontSize + 1)}
-              >+</button>
-            </div>
-          </div>
+          <!-- Tab 1: Font & Size -->
+          {#if customizerTab === "text"}
+            <div class="customizer-tab-content">
+              <div class="customizer-row">
+                <div class="customizer-group font-action-group">
+                  <span class="customizer-label">Font</span>
+                  <button
+                    type="button"
+                    class="btn-change-font"
+                    onclick={() => fontShowcaseOpen = true}
+                    title="Change Subtitle Font"
+                  >
+                    <span class="font-icon-badge">Aa</span>
+                    <span class="font-current-name">{activeFontDisplayName}</span>
+                    <span class="font-change-tag">Change</span>
+                  </button>
+                  <input
+                    type="file"
+                    accept=".ttf,.otf,.woff,.woff2"
+                    style="display: none;"
+                    bind:this={fontUploadInput}
+                    onchange={onFontFileChange}
+                  />
+                </div>
 
-          <div class="customizer-group">
-            <span class="customizer-label">Alignment</span>
-            <div class="button-toggle-group">
-              <button
-                class="toggle-btn"
-                class:active={subtitleAlign === "left"}
-                onclick={() => subtitleAlign = "left"}
-              >
-                Left
-              </button>
-              <button
-                class="toggle-btn"
-                class:active={subtitleAlign === "center"}
-                onclick={() => subtitleAlign = "center"}
-              >
-                Center
-              </button>
-              <button
-                class="toggle-btn"
-                class:active={subtitleAlign === "right"}
-                onclick={() => subtitleAlign = "right"}
-              >
-                Right
-              </button>
-            </div>
-          </div>
+                <div class="customizer-group size-group">
+                  <label class="customizer-label" for="font-size-slider">Size ({subtitleFontSize}px)</label>
+                  <div class="size-controls-row">
+                    <button
+                      type="button"
+                      class="size-nudge-btn"
+                      title="Decrease font size"
+                      onclick={() => subtitleFontSize = Math.max(12, subtitleFontSize - 1)}
+                    >&minus;</button>
+                    <input
+                      id="font-size-slider"
+                      type="range"
+                      class="customizer-range"
+                      min="12"
+                      max="34"
+                      step="1"
+                      bind:value={subtitleFontSize}
+                    />
+                    <button
+                      type="button"
+                      class="size-nudge-btn"
+                      title="Increase font size"
+                      onclick={() => subtitleFontSize = Math.min(34, subtitleFontSize + 1)}
+                    >+</button>
+                  </div>
+                </div>
+              </div>
 
-          <div class="customizer-group">
-            <span class="customizer-label">Style</span>
-            <div class="button-toggle-group">
-              <button
-                class="toggle-btn"
-                class:active={subtitleBg === "box"}
-                onclick={() => subtitleBg = "box"}
-              >
-                Boxed
-              </button>
-              <button
-                class="toggle-btn"
-                class:active={subtitleBg === "shadow"}
-                onclick={() => subtitleBg = "shadow"}
-              >
-                Outline
-              </button>
+              <div class="customizer-row">
+                <div class="customizer-group">
+                  <span class="customizer-label">Alignment</span>
+                  <div class="button-toggle-group">
+                    <button
+                      type="button"
+                      class="toggle-btn"
+                      class:active={subtitleAlign === "left"}
+                      onclick={() => subtitleAlign = "left"}
+                    >Left</button>
+                    <button
+                      type="button"
+                      class="toggle-btn"
+                      class:active={subtitleAlign === "center"}
+                      onclick={() => subtitleAlign = "center"}
+                    >Center</button>
+                    <button
+                      type="button"
+                      class="toggle-btn"
+                      class:active={subtitleAlign === "right"}
+                      onclick={() => subtitleAlign = "right"}
+                    >Right</button>
+                  </div>
+                </div>
+
+                <div class="customizer-group">
+                  <span class="customizer-label">Badge Style</span>
+                  <div class="button-toggle-group">
+                    <button
+                      type="button"
+                      class="toggle-btn"
+                      class:active={subtitleBg === "box"}
+                      onclick={() => subtitleBg = "box"}
+                    >Boxed</button>
+                    <button
+                      type="button"
+                      class="toggle-btn"
+                      class:active={subtitleBg === "shadow"}
+                      onclick={() => subtitleBg = "shadow"}
+                    >Outline</button>
+                  </div>
+                </div>
+              </div>
             </div>
-          </div>
+
+          <!-- Tab 2: Position & Screen Placement -->
+          {:else if customizerTab === "position"}
+            <div class="customizer-tab-content position-tab">
+              <div class="customizer-row">
+                <div class="customizer-group">
+                  <span class="customizer-label">Quick Placement</span>
+                  <div class="button-toggle-group">
+                    <button
+                      type="button"
+                      class="toggle-btn"
+                      class:active={subtitleVerticalPosition === 12}
+                      onclick={() => subtitleVerticalPosition = 12}
+                    >Bottom</button>
+                    <button
+                      type="button"
+                      class="toggle-btn"
+                      class:active={subtitleVerticalPosition === 25}
+                      onclick={() => subtitleVerticalPosition = 25}
+                    >Safe Zone</button>
+                    <button
+                      type="button"
+                      class="toggle-btn"
+                      class:active={subtitleVerticalPosition === 50}
+                      onclick={() => subtitleVerticalPosition = 50}
+                    >Center</button>
+                    <button
+                      type="button"
+                      class="toggle-btn"
+                      class:active={subtitleVerticalPosition === 82}
+                      onclick={() => subtitleVerticalPosition = 82}
+                    >Top</button>
+                  </div>
+                </div>
+              </div>
+
+              <div class="customizer-row">
+                <div class="customizer-group full-width-slider">
+                  <div class="slider-label-row">
+                    <span class="customizer-label">Vertical Position ({subtitleVerticalPosition}%)</span>
+                    <span class="slider-pos-hint">
+                      {subtitleVerticalPosition < 20 ? "Bottom Third" : subtitleVerticalPosition < 40 ? "Lower Safe Zone" : subtitleVerticalPosition < 65 ? "Center Screen" : "Top Third"}
+                    </span>
+                  </div>
+                  <div class="vertical-slider-wrapper">
+                    <span class="slider-end-icon">⬇</span>
+                    <input
+                      type="range"
+                      class="customizer-range full-range"
+                      min="4"
+                      max="88"
+                      step="1"
+                      bind:value={subtitleVerticalPosition}
+                    />
+                    <span class="slider-end-icon">⬆</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          <!-- Tab 3: Colors & Opacity -->
+          {:else if customizerTab === "colors"}
+            <div class="customizer-tab-content colors-tab">
+              <div class="customizer-row">
+                <div class="customizer-group color-picker-group">
+                  <span class="customizer-label">Text Color</span>
+                  <div class="color-palette-row">
+                    {#each ["#ffffff", "#fde047", "#38bdf8", "#4ade80", "#fb923c", "#f472b6"] as color}
+                      <button
+                        type="button"
+                        class="color-swatch-btn"
+                        class:selected={subtitleTextColor.toLowerCase() === color.toLowerCase()}
+                        style="background-color: {color};"
+                        onclick={() => subtitleTextColor = color}
+                        title={color}
+                      >
+                        {#if subtitleTextColor.toLowerCase() === color.toLowerCase()}
+                          <span class="swatch-check">✓</span>
+                        {/if}
+                      </button>
+                    {/each}
+                    <label class="custom-color-picker-label" title="Custom Text Color">
+                      <input type="color" bind:value={subtitleTextColor} class="hidden-color-input" />
+                      <span class="custom-color-indicator">🎨</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              {#if subtitleBg === "box"}
+                <div class="customizer-row">
+                  <div class="customizer-group color-picker-group">
+                    <span class="customizer-label">Box Background</span>
+                    <div class="color-palette-row">
+                      {#each ["#000000", "#0f172a", "#1e1b4b", "#052e16", "#3b0764", "#ffffff"] as color}
+                        <button
+                          type="button"
+                          class="color-swatch-btn"
+                          class:selected={subtitleBgColor.toLowerCase() === color.toLowerCase()}
+                          style="background-color: {color}; border: 1px solid rgba(255,255,255,0.25);"
+                          onclick={() => subtitleBgColor = color}
+                          title={color}
+                        >
+                          {#if subtitleBgColor.toLowerCase() === color.toLowerCase()}
+                            <span class="swatch-check" style="color: {color === '#ffffff' ? '#000' : '#fff'};">✓</span>
+                          {/if}
+                        </button>
+                      {/each}
+                      <label class="custom-color-picker-label" title="Custom Box Color">
+                        <input type="color" bind:value={subtitleBgColor} class="hidden-color-input" />
+                        <span class="custom-color-indicator">🎨</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div class="customizer-group size-group">
+                    <label class="customizer-label" for="bg-opacity-slider">Opacity ({Math.round(subtitleBgOpacity * 100)}%)</label>
+                    <input
+                      id="bg-opacity-slider"
+                      type="range"
+                      class="customizer-range"
+                      min="0.2"
+                      max="1.0"
+                      step="0.05"
+                      bind:value={subtitleBgOpacity}
+                    />
+                  </div>
+                </div>
+              {:else}
+                <div class="customizer-row">
+                  <div class="customizer-group color-picker-group">
+                    <span class="customizer-label">Outline Color</span>
+                    <div class="color-palette-row">
+                      {#each ["#000000", "#0f172a", "#7f1d1d", "#1e3a8a", "#ffffff"] as color}
+                        <button
+                          type="button"
+                          class="color-swatch-btn"
+                          class:selected={subtitleOutlineColor.toLowerCase() === color.toLowerCase()}
+                          style="background-color: {color}; border: 1px solid rgba(255,255,255,0.25);"
+                          onclick={() => subtitleOutlineColor = color}
+                          title={color}
+                        >
+                          {#if subtitleOutlineColor.toLowerCase() === color.toLowerCase()}
+                            <span class="swatch-check" style="color: {color === '#ffffff' ? '#000' : '#fff'};">✓</span>
+                          {/if}
+                        </button>
+                      {/each}
+                      <label class="custom-color-picker-label" title="Custom Outline Color">
+                        <input type="color" bind:value={subtitleOutlineColor} class="hidden-color-input" />
+                        <span class="custom-color-indicator">🎨</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              {/if}
+            </div>
+          {/if}
         </div>
 
         <!-- Actions Toolbar: Export and Downloads -->
@@ -1429,6 +1691,24 @@
             </svg>
             <span>{isBurning ? "Burning Video..." : "Download Video (MP4)"}</span>
           </button>
+
+          <!-- Upload .SRT / .VTT Button Requested by Client -->
+          <button class="btn btn-secondary btn-upload-srt" onclick={triggerSrtUpload}>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+              <polyline points="17 8 12 3 7 8"></polyline>
+              <line x1="12" y1="3" x2="12" y2="15"></line>
+            </svg>
+            <span>Upload .SRT / .VTT</span>
+          </button>
+
+          <input
+            type="file"
+            accept=".srt,.vtt,text/plain"
+            style="display: none;"
+            bind:this={srtFileInput}
+            onchange={handleSrtFileUpload}
+          />
 
           <button class="btn btn-secondary" onclick={downloadSrt} disabled={cues.length === 0}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1447,6 +1727,16 @@
           </button>
         </div>
 
+        {#if srtUploadStatus}
+          <div class="status-banner success-banner">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"></path>
+              <polyline points="22 4 12 14.01 9 11.01"></polyline>
+            </svg>
+            <span>{srtUploadStatus}</span>
+          </div>
+        {/if}
+
         {#if isBurning}
           <div style="font-size: 12px; color: var(--accent-gold); display: flex; align-items: center; gap: 8px;">
             <div class="phase-spinner"></div>
@@ -1464,17 +1754,31 @@
               {detectedLanguage ? `From ${detectedLanguage} to Sorani` : "Sorani Kurdish"}
             </span>
           </div>
-          <button
-            class="btn btn-secondary btn-sm"
-            onclick={addCueAtCurrentTime}
-            title="Insert new subtitle at current video playback position"
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <line x1="12" y1="5" x2="12" y2="19"></line>
-              <line x1="5" y1="12" x2="19" y2="12"></line>
-            </svg>
-            <span>+ Add ({formatTime(currentTime)})</span>
-          </button>
+          <div class="cue-header-actions">
+            <button
+              class="btn btn-secondary btn-sm"
+              onclick={triggerSrtUpload}
+              title="Upload / Import .SRT or .VTT subtitles"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+              </svg>
+              <span>Import SRT</span>
+            </button>
+            <button
+              class="btn btn-secondary btn-sm"
+              onclick={addCueAtCurrentTime}
+              title="Insert new subtitle at current video playback position"
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="12" y1="5" x2="12" y2="19"></line>
+                <line x1="5" y1="12" x2="19" y2="12"></line>
+              </svg>
+              <span>+ Add ({formatTime(currentTime)})</span>
+            </button>
+          </div>
         </div>
 
         <div class="cue-scroll-area">
